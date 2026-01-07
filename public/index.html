@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>PDF Page Remover</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .card {
+      background: #fff;
+      padding: 25px;
+      width: 450px;
+      border-radius: 8px;
+      box-shadow: 0 5px 15px rgba(0,0,0,.1);
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 10px;
+    }
+
+    input[type="number"] {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 12px;
+    }
+
+    .dropzone {
+      border: 2px dashed #2563eb;
+      padding: 25px;
+      text-align: center;
+      cursor: pointer;
+      margin-bottom: 10px;
+      transition: background 0.2s;
+    }
+
+    .dropzone.drag {
+      background: #e0e7ff;
+    }
+
+    .file-list {
+      margin-top: 10px;
+      max-height: 120px;
+      overflow-y: auto;
+      font-size: 14px;
+    }
+
+    .file-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px;
+      border-bottom: 1px solid #eee;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    .msg {
+      margin-top: 10px;
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .clear-btn {
+      background: #dc2626;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h2>Remove Page from PDFs</h2>
+
+  <input type="number" id="pageInput" min="1" placeholder="Page number to remove" />
+
+  <div class="dropzone" id="dropzone">
+    Drag & Drop PDFs here<br/>or click to select
+    <input type="file" id="fileInput" accept="application/pdf" multiple hidden />
+  </div>
+
+  <!-- ✅ Selected files preview -->
+  <div class="file-list" id="fileList"></div>
+
+  <button id="processBtn">Process & Download ZIP</button>
+  <button class="clear-btn" id="clearBtn">Clear Files</button>
+
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("fileInput");
+  const fileListEl = document.getElementById("fileList");
+  const processBtn = document.getElementById("processBtn");
+  const clearBtn = document.getElementById("clearBtn");
+  const msg = document.getElementById("msg");
+  const pageInput = document.getElementById("pageInput");
+
+  let files = [];
+
+  /* ---------- Helpers ---------- */
+  function renderFileList() {
+    fileListEl.innerHTML = "";
+    files.forEach(file => {
+      const div = document.createElement("div");
+      div.className = "file-item";
+      div.innerHTML = `
+        <span>${file.name}</span>
+        <span>${(file.size / 1024).toFixed(1)} KB</span>
+      `;
+      fileListEl.appendChild(div);
+    });
+
+    processBtn.innerText= `Process ${files?.length ? '(' + files?.length + ')' +' files': ''}  & Download ZIP`
+  }
+
+  /* ---------- Select files ---------- */
+  dropzone.onclick = () => fileInput.click();
+
+  fileInput.onchange = () => {
+    files = [...fileInput.files];
+    renderFileList();
+  };
+
+  /* ---------- Drag & Drop ---------- */
+  dropzone.ondragover = e => {
+    e.preventDefault();
+    dropzone.classList.add("drag");
+  };
+
+  dropzone.ondragleave = () => dropzone.classList.remove("drag");
+
+  dropzone.ondrop = e => {
+    e.preventDefault();
+    dropzone.classList.remove("drag");
+    files = [...e.dataTransfer.files].filter(f => f.type === "application/pdf");
+    renderFileList();
+  };
+
+  /* ---------- Clear files ---------- */
+  clearBtn.onclick = () => {
+    files = [];
+    fileInput.value = "";
+    renderFileList();
+    msg.textContent = "";
+  };
+
+  /* ---------- Upload ---------- */
+  processBtn.onclick = async () => {
+    const page = pageInput.value;
+
+    if (!files.length) {
+      msg.textContent = "Please select PDF files";
+      msg.style.color = "red";
+      return;
+    }
+
+    if (!page || page < 1) {
+      msg.textContent = "Enter valid page number";
+      msg.style.color = "red";
+      return;
+    }
+
+    const formData = new FormData();
+    files.forEach(f => formData.append("pdfs", f));
+    formData.append("removePage", page);
+
+    processBtn.disabled = true;
+    msg.textContent = "Processing...";
+
+    try {
+      const res = await fetch("/remove-page", {
+        method: "POST",
+        body: formData
+      });
+
+      if (!res.ok) throw new Error();
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "processed-pdfs.zip";
+      a.click();
+
+      msg.textContent = "Download started!";
+      msg.style.color = "green";
+    } catch {
+      msg.textContent = "Processing failed";
+      msg.style.color = "red";
+    } finally {
+      processBtn.disabled = false;
+    }
+  };
+</script>
+
+</body>
+</html>
