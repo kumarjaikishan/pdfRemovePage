@@ -1,26 +1,22 @@
 const express = require("express");
 const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
 const cors = require("cors");
+const path = require("path");
 const archiver = require("archiver");
 const { PDFDocument } = require("pdf-lib");
 
 const app = express();
-const PORT = 5000;
-
-/* ---------- Ensure required folders exist ---------- */
-["uploads", "output", "public"].forEach(dir => {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir);
-});
+const PORT = process.env.PORT || 5000;
 
 /* ---------- Middlewares ---------- */
 app.use(cors());
-app.use(express.static(path.join(__dirname, "public")));
 
-/* ---------- Multer config (PDF only) ---------- */
+/* ---------- Multer (MEMORY STORAGE – Vercel safe) ---------- */
 const upload = multer({
-  dest: "uploads/",
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB per PDF (adjust if needed)
+  },
   fileFilter: (req, file, cb) => {
     if (file.mimetype === "application/pdf") {
       cb(null, true);
@@ -30,7 +26,7 @@ const upload = multer({
   }
 });
 
-/* ---------- MULTI PDF PROCESS → ZIP ---------- */
+/* ---------- REMOVE PAGE + ZIP (STREAMED) ---------- */
 app.post("/remove-page", upload.array("pdfs", 20), async (req, res) => {
   try {
     const removePage = parseInt(req.body.removePage, 10);
@@ -43,24 +39,28 @@ app.post("/remove-page", upload.array("pdfs", 20), async (req, res) => {
       return res.status(400).json({ message: "No PDFs uploaded" });
     }
 
-    const zipName = `processed-${Date.now()}.zip`;
-    const zipPath = path.join("output", zipName);
+    /* ---- Set response headers for ZIP ---- */
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=processed-${Date.now()}.zip`
+    );
 
-    const output = fs.createWriteStream(zipPath);
     const archive = archiver("zip", { zlib: { level: 9 } });
 
     archive.on("error", err => {
-      console.error(err);
-      return res.status(500).end();
+      console.error("Archive error:", err);
+      res.status(500).end();
     });
 
-    archive.pipe(output);
+    /* ---- Pipe ZIP directly to response (NO FILE SYSTEM) ---- */
+    archive.pipe(res);
 
+    /* ---- Process each PDF ---- */
     for (const file of req.files) {
-      const pdfBytes = fs.readFileSync(file.path);
-      const pdfDoc = await PDFDocument.load(pdfBytes);
+      const pdfDoc = await PDFDocument.load(file.buffer);
 
-      const pageIndex = removePage - 1; // 1-based → 0-based
+      const pageIndex = removePage - 1; // convert to 0-based index
 
       if (pageIndex < pdfDoc.getPageCount()) {
         pdfDoc.removePage(pageIndex);
@@ -72,29 +72,22 @@ app.post("/remove-page", upload.array("pdfs", 20), async (req, res) => {
       archive.append(buffer, {
         name: `modified-${file.originalname}`
       });
-
-      fs.unlinkSync(file.path);
     }
 
-    await archive.finalize();
-
-    output.on("close", () => {
-      res.download(zipPath, () => fs.unlinkSync(zipPath));
-    });
+    await archive.finalize(); // triggers download
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Processing failed" });
+    console.error("Processing error:", err);
+    res.status(500).json({ message: "PDF processing failed" });
   }
 });
 
-
-/* ---------- Serve frontend ---------- */
+/* ---------- Health check ---------- */
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-/* ---------- Start server ---------- */
+/* ---------- Start server (local only, ignored by Vercel) ---------- */
 app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
